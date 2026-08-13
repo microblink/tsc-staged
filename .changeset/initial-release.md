@@ -1,5 +1,5 @@
 ---
-"tsc-staged": minor
+"tsc-staged": major
 ---
 
 Initial release of `tsc-staged`. Run typechecking in monorepos, only for packages which modified files.
