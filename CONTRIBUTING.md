@@ -36,6 +36,13 @@ Before making a change, check for existing pull requests addressing the same pro
 
 Please make sure that your changes pass all checks before marking the PR as ready for review. Follow the guidelines in the sections below to increase the chances of your PR being merged!
 
+### Git conventions
+
+- Use a short, descriptive branch name.
+- Keep commit messages short, descriptive, and simple. Do not use conventional commit prefixes.
+- Prefer squash merging pull requests.
+- Large changes may be rebase merged when their commits are well separated and self-contained.
+
 ### Linting & formatting
 
 This project uses Vite+ for linting and formatting. Run them like this:
