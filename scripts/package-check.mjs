@@ -47,6 +47,28 @@ try {
       stdio: "inherit",
     });
 
+    writeFileSync(path.join(consumerRoot, "src/index.ts"), "export const value: string = 1;\n");
+    let rejectedInvalidTypeScript = false;
+
+    try {
+      runCommand("pnpm", ["exec", "tsc-staged", "src/index.ts"], {
+        cwd: consumerRoot,
+        encoding: "utf8",
+      });
+    } catch (error) {
+      const output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+
+      if (!output.includes("TS2322")) {
+        throw error;
+      }
+
+      rejectedInvalidTypeScript = true;
+    }
+
+    if (!rejectedInvalidTypeScript) {
+      throw new Error(`Expected the packed CLI with TypeScript ${version} to reject invalid TypeScript`);
+    }
+
     const manifest = JSON.parse(readFileSync(path.join(consumerRoot, "node_modules/tsc-staged/package.json"), "utf8"));
     if (manifest.version !== packageVersion) {
       throw new Error(`Expected packed version ${packageVersion}, got ${manifest.version}`);
