@@ -1,0 +1,12 @@
+output:
+  - summary
+  - success
+  - failure
+  - execution
+  - execution_out
+  - execution_info
+
+pre-commit:
+  jobs:
+    - name: vite-plus
+      run: vp staged

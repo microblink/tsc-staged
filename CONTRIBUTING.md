@@ -1,0 +1,72 @@
+# Contributing
+
+Thank you for your interest in contributing to `tsc-staged`!
+
+## Issues
+
+Feel free to create an issue to report a bug, request a feature, or ask a question. Before doing so, please check for existing issues concerned about the same topic.
+
+## Development
+
+### Setup
+
+This project uses [mise](https://mise.jdx.dev/) to manage dependencies.
+
+```sh
+mise trust && mise install
+```
+
+Install dependencies:
+
+```sh
+pnpm install
+```
+
+### Making changes
+
+Before making a change, check for existing pull requests addressing the same problem.
+
+1. Fork the repository and create a new branch.
+2. Make your changes and commit them.
+3. Add a changeset using `pnpm changeset`. Make sure to follow SemVer conventions!
+4. Push your change to your fork.
+5. Open a **draft** pull request against the main branch of this repository.
+6. Wait for CI results and resolve any issues.
+7. Mark the PR as ready for review.
+
+Please make sure that your changes pass all checks before marking the PR as ready for review. Follow the guidelines in the sections below to increase the chances of your PR being merged!
+
+### Linting & formatting
+
+This project uses Vite+ for linting and formatting. Run them like this:
+
+```sh
+pnpm lint
+pnpm format
+```
+
+Both are required to pass with no errors or warnings.
+
+### Testing
+
+This project uses `vitest` for testing. Run tests:
+
+```sh
+pnpm test
+```
+
+All tests are required to pass.
+
+When adding new tests, consider the following:
+
+- Tests should be focused and clear to understand
+- Tests should test behaviour, not implementation
+- Since this is a pure package with no runtime dependencies, tests should test the implementation and avoid mocks
+
+### Documentation
+
+When you make changes that affect the public API, ensure to update related documentation as well.
+
+### Using AI
+
+You are free to use AI tools for any contributions to this project. However, as any other contribution, review your changes carefully before opening a PR. AI-generated, low-quality contributions with no sign of human review will be rejected.
