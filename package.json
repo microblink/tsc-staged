@@ -29,19 +29,21 @@
   "type": "module",
   "scripts": {
     "build": "vp pack",
-    "check": "vp check && vp test && pnpm package:check",
+    "check": "vp check && vp test && pnpm test:e2e",
     "format": "vp fmt",
     "format:check": "vp fmt --check",
     "lint": "vp lint --max-warnings=0",
-    "package:check": "node scripts/package-check.mjs",
     "prepack": "vp pack",
     "release": "changeset publish",
-    "test": "vp test"
+    "test": "vp test",
+    "test:coverage": "c8 vp test",
+    "test:e2e": "node scripts/package-check.mts"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.0",
     "@types/node": "^24.13.3",
     "@typescript/native": "npm:typescript@~7.0.2",
+    "c8": "12.0.0",
     "lefthook": "~2.1.10",
     "typescript": "npm:@typescript/typescript6@~6.0.2",
     "vite": "catalog:",
@@ -49,6 +51,20 @@
   },
   "peerDependencies": {
     "typescript": ">=6 <8"
+  },
+  "c8": {
+    "all": true,
+    "exclude": [
+      "src/**/*.test.ts"
+    ],
+    "include": [
+      "src/**/*.ts"
+    ],
+    "reporter": [
+      "text",
+      "html",
+      "json-summary"
+    ]
   },
   "engines": {
     "node": ">=22"
