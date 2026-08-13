@@ -42,6 +42,12 @@ export default defineConfig({
     "**/*.{js,cjs,mjs,jsx,json,jsonc,yaml,yml,css,md}": "vp fmt --check --no-error-on-unmatched-pattern",
   },
   test: {
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.test.ts"],
+      reporter: ["text", "json-summary"],
+    },
     environment: "node",
     include: ["src/**/*.test.ts"],
     passWithNoTests: true,

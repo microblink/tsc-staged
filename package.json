@@ -36,12 +36,14 @@
     "package:check": "node scripts/package-check.mjs",
     "prepack": "vp pack",
     "release": "changeset publish",
-    "test": "vp test"
+    "test": "vp test",
+    "test:coverage": "vp test --coverage"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.0",
     "@types/node": "^24.13.3",
     "@typescript/native": "npm:typescript@~7.0.2",
+    "@vitest/coverage-v8": "4.1.10",
     "lefthook": "~2.1.10",
     "typescript": "npm:@typescript/typescript6@~6.0.2",
     "vite": "catalog:",
