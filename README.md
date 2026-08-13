@@ -29,7 +29,7 @@ yarn add -D tsc-staged
 bun add -d tsc-staged
 ```
 
-## Use with `lint-staged` or `nano-staged`
+## Use with `lint-staged`, `nano-staged` or `Vite+`
 
 ```js
 // lint-staged.config.js / nano-staged.mjs
@@ -38,17 +38,24 @@ export default {
 };
 ```
 
-`lint-staged` and `nano-staged` append matching file paths to the command. For each file,
-`tsc-staged` finds the nearest `tsconfig.json`, deduplicates the affected projects, and runs:
+```ts
+// vite.config.ts - For usage with Vite+ and `vp staged`
+import { defineConfig } from "vite-plus";
+
+export default defineConfig({
+  staged: {
+    "**/*.{ts,tsx,mts,cts}": "tsc-staged",
+  },
+});
+```
+
+For each file, `tsc-staged` finds the nearest `tsconfig.json`, deduplicates the affected projects, and runs:
 
 ```sh
 tsc --project path/to/tsconfig.json --noEmit
 ```
 
-Each affected project is checked in full, so errors in unstaged files are reported too. Projects
-are checked sequentially and the command stops on the first failure. All project compiler settings,
-including `skipLibCheck`, are preserved. No temporary configuration, JavaScript, or declaration
-files are created. TypeScript may still update configured incremental build metadata.
+Each affected project is checked in full, so errors in unstaged files are reported as well. Projects are checked sequentially and the command stops on the first failure.
 
 ## Contributing
 
