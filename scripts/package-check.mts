@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,7 +7,7 @@ const repositoryRoot = process.cwd();
 const temporaryDirectory = mkdtempSync(path.join(tmpdir(), "tsc-staged-package-"));
 const packageVersion = JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")).version;
 
-function runCommand(command, args, options) {
+function runCommand(command: string, args: string[], options: ExecFileSyncOptionsWithStringEncoding): string {
   return process.platform === "win32"
     ? execFileSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", command, ...args], options)
     : execFileSync(command, args, options);
@@ -29,12 +29,13 @@ try {
 
   const packedPath = path.join(temporaryDirectory, packedName);
 
-  // Install the tarball in isolated projects for each supported TypeScript generation.
+  // Install in isolated projects for each supported TypeScript generation
   for (const [version, compiler] of [
     ["6", "typescript@npm:@typescript/typescript6@6.0.2"],
     ["7", "typescript@7.0.2"],
-  ]) {
+  ] as const) {
     const consumerRoot = path.join(temporaryDirectory, `consumer-${version}`);
+
     mkdirSync(path.join(consumerRoot, "src"), { recursive: true });
     writeFileSync(path.join(consumerRoot, "package.json"), '{"private":true,"type":"module"}\n');
     writeFileSync(path.join(consumerRoot, "tsconfig.json"), '{"compilerOptions":{"strict":true},"include":["src"]}\n');
@@ -42,15 +43,18 @@ try {
 
     runCommand("pnpm", ["add", "--ignore-workspace", "--save-dev", packedPath, compiler], {
       cwd: consumerRoot,
+      encoding: "utf8",
       stdio: "inherit",
     });
     runCommand("pnpm", ["exec", "tsc-staged", "src/index.ts"], {
       cwd: consumerRoot,
+      encoding: "utf8",
       stdio: "inherit",
     });
 
-    // Confirm the installed CLI actually reports compiler errors instead of silently succeeding.
+    // Confirm the installed CLI reports compiler errors
     writeFileSync(path.join(consumerRoot, "src/index.ts"), "export const value: string = 1;\n");
+
     let rejectedInvalidTypeScript = false;
 
     try {
@@ -59,7 +63,13 @@ try {
         encoding: "utf8",
       });
     } catch (error) {
-      const output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+      if (typeof error !== "object" || error === null) {
+        throw error;
+      }
+
+      const stdout = "stdout" in error && typeof error.stdout === "string" ? error.stdout : "";
+      const stderr = "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
+      const output = stdout + stderr;
 
       if (!output.includes("TS2322")) {
         throw error;
@@ -73,6 +83,7 @@ try {
     }
 
     const manifest = JSON.parse(readFileSync(path.join(consumerRoot, "node_modules/tsc-staged/package.json"), "utf8"));
+
     if (manifest.version !== packageVersion) {
       throw new Error(`Expected packed version ${packageVersion}, got ${manifest.version}`);
     }

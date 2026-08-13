@@ -29,15 +29,15 @@
   "type": "module",
   "scripts": {
     "build": "vp pack",
-    "check": "vp check && vp test && pnpm package:check",
+    "check": "vp check && vp test && pnpm test:e2e",
     "format": "vp fmt",
     "format:check": "vp fmt --check",
     "lint": "vp lint --max-warnings=0",
-    "package:check": "node scripts/package-check.mjs",
     "prepack": "vp pack",
     "release": "changeset publish",
     "test": "vp test",
-    "test:coverage": "c8 vp test"
+    "test:coverage": "c8 vp test",
+    "test:e2e": "node scripts/package-check.mts"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.0",
