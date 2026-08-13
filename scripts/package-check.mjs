@@ -14,6 +14,7 @@ function runCommand(command, args, options) {
 }
 
 try {
+  // Pack once so every check exercises the same publishable artifact.
   const packedName = runCommand("npm", ["pack", "--pack-destination", temporaryDirectory], {
     cwd: repositoryRoot,
     encoding: "utf8",
@@ -28,6 +29,7 @@ try {
 
   const packedPath = path.join(temporaryDirectory, packedName);
 
+  // Install the tarball in isolated projects for each supported TypeScript generation.
   for (const [version, compiler] of [
     ["6", "typescript@npm:@typescript/typescript6@6.0.2"],
     ["7", "typescript@7.0.2"],
@@ -47,6 +49,7 @@ try {
       stdio: "inherit",
     });
 
+    // Confirm the installed CLI actually reports compiler errors instead of silently succeeding.
     writeFileSync(path.join(consumerRoot, "src/index.ts"), "export const value: string = 1;\n");
     let rejectedInvalidTypeScript = false;
 
