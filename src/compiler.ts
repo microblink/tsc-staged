@@ -103,6 +103,10 @@ function normalizePath(filePath: string): string {
   return process.platform === "win32" ? realPath.toLowerCase() : realPath;
 }
 
+function relativePath(from: string, to: string): string {
+  return path.relative(from, to).replaceAll(path.sep, "/");
+}
+
 function findUncoveredFiles(compiler: Compiler, project: AffectedProject): { status: number; files: string[] } {
   const existingFiles = project.filePaths.filter((filePath) => existsSync(filePath));
 
@@ -139,10 +143,10 @@ function reportUncoveredFiles(repositoryRoot: string, uncoveredProjects: Map<Aff
   console.error("Staged TypeScript files are not included in their nearest project:");
 
   for (const [project, filePaths] of uncoveredProjects) {
-    console.error(`${path.relative(repositoryRoot, project.configPath)}:`);
+    console.error(`${relativePath(repositoryRoot, project.configPath)}:`);
 
     for (const filePath of filePaths) {
-      console.error(`  ${path.relative(repositoryRoot, filePath)}`);
+      console.error(`  ${relativePath(repositoryRoot, filePath)}`);
     }
   }
 
@@ -153,7 +157,7 @@ export function typecheckProjects(repositoryRoot: string, filePaths: string[], e
   const { projects, unconfiguredFiles } = findAffectedProjects(repositoryRoot, filePaths, extensions);
 
   for (const filePath of unconfiguredFiles) {
-    console.warn(`Skipping staged typecheck for ${path.relative(repositoryRoot, filePath)}: no tsconfig.json found`);
+    console.warn(`Skipping staged typecheck for ${relativePath(repositoryRoot, filePath)}: no tsconfig.json found`);
   }
 
   if (projects.size === 0) {
