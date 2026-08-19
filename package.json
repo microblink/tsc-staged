@@ -14,7 +14,7 @@
   "bugs": {
     "url": "https://github.com/microblink/tsc-staged/issues"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "Microblink Ltd.",
   "repository": {
     "type": "git",
