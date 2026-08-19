@@ -1,6 +1,6 @@
 {
   "name": "tsc-staged",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Type-check TypeScript projects affected by staged files.",
   "keywords": [
     "lint-staged",
