@@ -29,19 +29,27 @@ try {
 
   const packedPath = path.join(temporaryDirectory, packedName);
 
-  // Install in isolated projects for each supported TypeScript generation
-  for (const [version, compiler] of [
-    ["6", "typescript@npm:@typescript/typescript6@6.0.2"],
-    ["7", "typescript@7.0.2"],
+  // Install in isolated projects for each supported TypeScript setup.
+  for (const [version, compilers, compilerOptions] of [
+    ["6", ["typescript@npm:@typescript/typescript6@6.0.2"], { strict: true }],
+    ["7", ["typescript@7.0.2"], { strict: true }],
+    [
+      "mixed",
+      ["typescript@npm:@typescript/typescript6@6.0.2", "@typescript/native@npm:typescript@7.0.2"],
+      { quiet: true, strict: true },
+    ],
   ] as const) {
     const consumerRoot = path.join(temporaryDirectory, `consumer-${version}`);
 
     mkdirSync(path.join(consumerRoot, "src"), { recursive: true });
     writeFileSync(path.join(consumerRoot, "package.json"), '{"private":true,"type":"module"}\n');
-    writeFileSync(path.join(consumerRoot, "tsconfig.json"), '{"compilerOptions":{"strict":true},"include":["src"]}\n');
+    writeFileSync(
+      path.join(consumerRoot, "tsconfig.json"),
+      `${JSON.stringify({ compilerOptions, include: ["src"] })}\n`,
+    );
     writeFileSync(path.join(consumerRoot, "src/index.ts"), "export const value: string = 'ok';\n");
 
-    runCommand("pnpm", ["add", "--ignore-workspace", "--save-dev", packedPath, compiler], {
+    runCommand("pnpm", ["add", "--ignore-workspace", "--save-dev", packedPath, ...compilers], {
       cwd: consumerRoot,
       encoding: "utf8",
       stdio: "inherit",

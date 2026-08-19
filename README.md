@@ -11,6 +11,8 @@
 - Node.js 22 or newer
 - TypeScript 6 or 7 installed locally in the project
 
+Run `tsc-staged` through the project's package manager or staged-file runner. It uses the first compiler exposed through `PATH`, preferring `tsc` over `tsc6` when both are in the same directory. One invocation uses one compiler; monorepos with different compiler versions need separate scoped invocations.
+
 ## Installation
 
 ```sh
@@ -54,6 +56,10 @@ For each file, `tsc-staged` finds the nearest `tsconfig.json`, deduplicates the 
 ```sh
 tsc --project path/to/tsconfig.json --noEmit
 ```
+
+Files without a `tsconfig.json` inside the repository are skipped with a warning. Other affected projects are still checked.
+
+Every existing staged TypeScript file must be part of its nearest project's compiler program. If a file is excluded, update the project configuration or narrow the staged-file matcher. Deleted files still select their nearest project.
 
 Each affected project is checked in full, so errors in unstaged files are reported as well. Projects are checked sequentially and the command stops on the first failure.
 

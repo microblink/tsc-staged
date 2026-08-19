@@ -31,9 +31,9 @@ it("requires TypeScript to be installed locally", () => {
   const result = spawnSync(process.execPath, [cliPath, "src/index.ts"], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, PATH: path.join(repositoryRoot, "node_modules/.bin") },
+    env: { ...process.env, PATH: "" },
   });
 
   expect(result.status).toBe(1);
-  expect(result.stderr).toContain("Install it in the project");
+  expect(result.stderr).toContain("Could not find tsc or tsc6. Install TypeScript in the project.");
 });

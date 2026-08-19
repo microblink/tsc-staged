@@ -102,9 +102,10 @@ describe("findProjectConfig", () => {
     });
     const filePath = path.join(repositoryRoot, "packages/project/src/index.ts");
 
-    expect(findProjectConfig(repositoryRoot, filePath)).toBe(
-      path.join(repositoryRoot, "packages/project/tsconfig.json"),
-    );
+    expect(findProjectConfig(repositoryRoot, filePath)).toEqual({
+      configPath: path.join(repositoryRoot, "packages/project/tsconfig.json"),
+      realConfigPath: path.join(repositoryRoot, "packages/project/tsconfig.json"),
+    });
   });
 
   it("returns the real path of a symlinked tsconfig.json", () => {
@@ -114,9 +115,10 @@ describe("findProjectConfig", () => {
     });
     symlinkSync(path.join(repositoryRoot, "configs/tsconfig.json"), path.join(repositoryRoot, "tsconfig.json"));
 
-    expect(findProjectConfig(repositoryRoot, path.join(repositoryRoot, "src/index.ts"))).toBe(
-      path.join(repositoryRoot, "configs/tsconfig.json"),
-    );
+    expect(findProjectConfig(repositoryRoot, path.join(repositoryRoot, "src/index.ts"))).toEqual({
+      configPath: path.join(repositoryRoot, "tsconfig.json"),
+      realConfigPath: path.join(repositoryRoot, "configs/tsconfig.json"),
+    });
   });
 
   it("does not walk above the repository root", () => {
@@ -127,9 +129,7 @@ describe("findProjectConfig", () => {
     mkdirSync(path.dirname(filePath), { recursive: true });
     writeFileSync(filePath, "export {};\n");
 
-    expect(() => findProjectConfig(repositoryRoot, filePath)).toThrow(
-      `Could not find a tsconfig.json for ${path.relative(repositoryRoot, filePath)}`,
-    );
+    expect(findProjectConfig(repositoryRoot, filePath)).toBeUndefined();
   });
 });
 
@@ -147,7 +147,18 @@ describe("findAffectedProjects", () => {
         ["src/first.ts", path.join(repositoryRoot, "src/second.ts")],
         supportedExtensions,
       ),
-    ).toEqual(new Set([path.join(repositoryRoot, "tsconfig.json")]));
+    ).toEqual({
+      projects: new Map([
+        [
+          path.join(repositoryRoot, "tsconfig.json"),
+          {
+            configPath: path.join(repositoryRoot, "tsconfig.json"),
+            filePaths: [path.join(repositoryRoot, "src/first.ts"), path.join(repositoryRoot, "src/second.ts")],
+          },
+        ],
+      ]),
+      unconfiguredFiles: [],
+    });
   });
 
   it("ignores unsupported files", () => {
@@ -157,8 +168,27 @@ describe("findAffectedProjects", () => {
       "README.md": "# readme\n",
     });
 
-    expect(findAffectedProjects(repositoryRoot, ["src/index.ts", "README.md"], supportedExtensions)).toEqual(
-      new Set([path.join(repositoryRoot, "tsconfig.json")]),
-    );
+    expect(findAffectedProjects(repositoryRoot, ["src/index.ts", "README.md"], supportedExtensions)).toEqual({
+      projects: new Map([
+        [
+          path.join(repositoryRoot, "tsconfig.json"),
+          {
+            configPath: path.join(repositoryRoot, "tsconfig.json"),
+            filePaths: [path.join(repositoryRoot, "src/index.ts")],
+          },
+        ],
+      ]),
+      unconfiguredFiles: [],
+    });
+  });
+
+  it("returns unique supported files without a project", () => {
+    const repositoryRoot = createRepository({ "src/index.ts": "export {};\n" });
+    const filePath = path.join(repositoryRoot, "src/index.ts");
+
+    expect(findAffectedProjects(repositoryRoot, ["src/index.ts", filePath], supportedExtensions)).toEqual({
+      projects: new Map(),
+      unconfiguredFiles: [filePath],
+    });
   });
 });
