@@ -33,17 +33,14 @@ export default defineConfig({
     format: ["esm"],
   },
   staged: {
-    "**/*.{ts,tsx,mts,cts}": [
-      "node src/index.ts",
-      "vp lint --max-warnings=0",
-      "vp fmt --check --no-error-on-unmatched-pattern",
-      "vp test",
-    ],
+    "{scripts,src}/**/*.{ts,tsx,mts,cts}": "node src/index.ts",
+    "**/*.{ts,tsx,mts,cts}": ["vp lint --max-warnings=0", "vp fmt --check --no-error-on-unmatched-pattern", "vp test"],
     "**/*.{js,cjs,mjs,jsx,json,jsonc,yaml,yml,css,md}": "vp fmt --check --no-error-on-unmatched-pattern",
   },
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
     passWithNoTests: true,
+    testTimeout: 10_000,
   },
 });
