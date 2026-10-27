@@ -1,0 +1,9 @@
+name: Coverage summary
+description: Render Vitest coverage totals into the GitHub job summary.
+
+runs:
+  using: composite
+  steps:
+    - name: Render coverage summary
+      shell: bash
+      run: node "${{ github.action_path }}/summarize.mts"

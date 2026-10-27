@@ -1,0 +1,7 @@
+dist/
+coverage/
+node_modules/
+*.tgz
+.tsconfig.staged-*.json
+tmp/
+.DS_Store

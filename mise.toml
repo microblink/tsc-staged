@@ -1,0 +1,4 @@
+[tools.node]
+version = "24.18.0"
+# pnpm is managed via corepack - see package.json for pinned version
+postinstall = "corepack enable"

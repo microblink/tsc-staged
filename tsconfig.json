@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "rewriteRelativeImportExtensions": true,
+    "erasableSyntaxOnly": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "nodenext",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "strict": true,
+    "target": "es2024",
+    "types": ["node"]
+  },
+  "include": ["scripts", "src"]
+}
