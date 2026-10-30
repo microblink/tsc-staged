@@ -1,0 +1,23 @@
+name: Bug report
+description: Report something that does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: Give the commands, configuration or a minimal repository that shows the problem.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Environment
+      description: Package version, Node.js version and operating system.
+      placeholder: 1.0.0, Node.js 24, macOS 15
+    validations:
+      required: true
