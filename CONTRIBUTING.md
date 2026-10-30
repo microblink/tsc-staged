@@ -37,12 +37,12 @@ Please make sure that your changes pass all checks before marking the PR as read
 
 ### Releases
 
-A release is published when the `version` in `package.json` changes on the main branch. If your change must be released:
+To release a change:
 
 1. Increase `version` in `package.json`. Follow [SemVer](https://semver.org/).
 2. Add an entry to `CHANGELOG.md` in the same pull request. Put a new `## <version>` heading below the title. Write each change as a short bullet sentence.
 
-When the pull request is merged, the release workflow publishes the package to npm and creates the GitHub release. The workflow uses the `CHANGELOG.md` entry as the release notes. Do not change `version` if the change does not need a release.
+After the pull request is merged, a maintainer creates a GitHub release with the tag `v<version>` on `main` and uses the `CHANGELOG.md` entry as the release notes. The release workflow then publishes the package to npm. Do not change `version` if the change does not need a release.
 
 ### Git conventions
 
