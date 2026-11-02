@@ -61,7 +61,9 @@ tsc --project path/to/tsconfig.json --noEmit
 
 Files without a `tsconfig.json` inside the repository are skipped with a warning. Other affected projects are still checked.
 
-Every existing staged TypeScript file must be part of its nearest project's compiler program. If a file is excluded, update the project configuration or narrow the staged-file matcher. Deleted files still select their nearest project.
+If the nearest `tsconfig.json` does not include a staged file but has `references`, such as a solution-style config with `"files": []`, `tsc-staged` checks the referenced projects that include the file. If a staged file was deleted, it checks all referenced projects.
+
+Every existing staged TypeScript file must be part of its nearest project or one of its referenced projects. If a file is excluded, update the project configuration or narrow the staged-file matcher. Deleted files still select their nearest project.
 
 Each affected project is checked in full, so errors in unstaged files are reported as well. Projects are checked sequentially and the command stops on the first failure.
 

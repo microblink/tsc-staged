@@ -11,6 +11,11 @@ interface Compiler {
   pathEnvironment: string;
 }
 
+interface ProjectResult {
+  status: number;
+  uncoveredFiles: string[];
+}
+
 function findEnvironmentKey(name: string): string | undefined {
   const normalizedName = process.platform === "win32" ? name.toLowerCase() : name;
 
@@ -67,23 +72,18 @@ function findCompiler(invocationDirectory: string): Compiler {
   throw new Error("Could not find tsc or tsc6. Install TypeScript in the project.");
 }
 
-function runCompiler(
-  compiler: Compiler,
-  configPath: string,
-  mode: "listFiles" | "typecheck",
-): SpawnSyncReturns<string> {
+function runCompiler(compiler: Compiler, configPath: string, args: string[]): SpawnSyncReturns<string> {
   const environment = { ...process.env, [compiler.pathKey]: compiler.pathEnvironment };
-  const finalArgument = mode === "listFiles" ? "--listFilesOnly" : "--noEmit";
+  const compilerArgs = ["--project", path.basename(configPath), ...args];
   const result = spawnSync(
     process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : compiler.executablePath,
-    process.platform === "win32"
-      ? ["/d", "/s", "/c", `${compiler.command} --project tsconfig.json ${finalArgument}`]
-      : ["--project", "tsconfig.json", finalArgument],
+    process.platform === "win32" ? ["/d", "/s", "/c", [compiler.command, ...compilerArgs].join(" ")] : compilerArgs,
     {
       cwd: path.dirname(configPath),
       encoding: "utf8",
       env: environment,
-      stdio: mode === "listFiles" ? ["inherit", "pipe", "pipe"] : "inherit",
+      maxBuffer: Number.POSITIVE_INFINITY,
+      stdio: ["inherit", "pipe", "pipe"],
     },
   );
 
@@ -92,10 +92,6 @@ function runCompiler(
   }
 
   return result;
-}
-
-function typecheckProject(compiler: Compiler, configPath: string): number {
-  return runCompiler(compiler, configPath, "typecheck").status ?? 1;
 }
 
 function normalizePath(filePath: string): string {
@@ -107,36 +103,80 @@ function relativePath(from: string, to: string): string {
   return path.relative(from, to).replaceAll(path.sep, "/");
 }
 
-function findUncoveredFiles(compiler: Compiler, project: AffectedProject): { status: number; files: string[] } {
-  const existingFiles = project.filePaths.filter((filePath) => existsSync(filePath));
+function splitListedFiles(output: string): { listedFiles: Set<string>; messages: string[] } {
+  const listedFiles = new Set<string>();
+  const messages: string[] = [];
 
-  if (existingFiles.length === 0) {
-    return { status: 0, files: [] };
+  for (const line of output.split(/\r?\n/u)) {
+    if (path.isAbsolute(line) && existsSync(line)) {
+      listedFiles.add(normalizePath(line));
+    } else {
+      messages.push(line);
+    }
   }
 
-  const result = runCompiler(compiler, project.configPath, "listFiles");
+  return { listedFiles, messages };
+}
+
+function findReferencedConfigs(compiler: Compiler, configPath: string): string[] {
+  const result = runCompiler(compiler, configPath, ["--showConfig"]);
+
+  if (result.status !== 0) {
+    return [];
+  }
+
+  const config: { references?: { path: string }[] } = JSON.parse(result.stdout);
+
+  return (config.references ?? []).map((reference) => {
+    const referencePath = path.resolve(path.dirname(configPath), reference.path);
+    return statSync(referencePath, { throwIfNoEntry: false })?.isDirectory()
+      ? path.join(referencePath, "tsconfig.json")
+      : referencePath;
+  });
+}
+
+function listProjectFiles(compiler: Compiler, configPath: string): Set<string> {
+  const result = runCompiler(compiler, configPath, ["--listFilesOnly"]);
+  return result.status === 0 ? splitListedFiles(result.stdout).listedFiles : new Set();
+}
+
+function checkProject(compiler: Compiler, configPath: string, filePaths: string[]): ProjectResult {
+  const prettyArgs = process.stdout.isTTY ? ["--pretty"] : [];
+  const result = runCompiler(compiler, configPath, ["--noEmit", "--listFiles", ...prettyArgs]);
   const status = result.status ?? 1;
+  const { listedFiles, messages } = splitListedFiles(result.stdout);
+
+  process.stdout.write(messages.join("\n"));
+  process.stderr.write(result.stderr);
 
   if (status !== 0) {
-    process.stdout.write(result.stdout ?? "");
-    process.stderr.write(result.stderr ?? "");
-    return { status, files: [] };
+    return { status, uncoveredFiles: [] };
   }
 
-  if (result.stderr) {
-    process.stderr.write(result.stderr);
+  const existingFiles = filePaths.filter((filePath) => existsSync(filePath));
+  const hasDeletedFiles = existingFiles.length < filePaths.length;
+  let uncoveredFiles = existingFiles.filter((filePath) => !listedFiles.has(normalizePath(filePath)));
+
+  if (uncoveredFiles.length === 0 && !hasDeletedFiles) {
+    return { status, uncoveredFiles };
   }
 
-  const configDirectory = path.dirname(project.configPath);
-  const projectFiles = new Set(
-    (result.stdout ?? "")
-      .split(/\r?\n/u)
-      .filter(Boolean)
-      .map((filePath) => normalizePath(path.resolve(configDirectory, filePath))),
-  );
-  const files = existingFiles.filter((filePath) => !projectFiles.has(normalizePath(filePath)));
+  for (const referencedConfig of findReferencedConfigs(compiler, configPath)) {
+    const referencedFiles = listProjectFiles(compiler, referencedConfig);
+    const coveredFiles = uncoveredFiles.filter((filePath) => referencedFiles.has(normalizePath(filePath)));
 
-  return { status: 0, files };
+    if (coveredFiles.length > 0 || hasDeletedFiles) {
+      const referenceResult = checkProject(compiler, referencedConfig, coveredFiles);
+
+      if (referenceResult.status !== 0) {
+        return referenceResult;
+      }
+
+      uncoveredFiles = uncoveredFiles.filter((filePath) => !coveredFiles.includes(filePath));
+    }
+  }
+
+  return { status, uncoveredFiles };
 }
 
 function reportUncoveredFiles(repositoryRoot: string, uncoveredProjects: Map<AffectedProject, string[]>): void {
@@ -168,28 +208,20 @@ export function typecheckProjects(repositoryRoot: string, filePaths: string[], e
   const uncoveredProjects = new Map<AffectedProject, string[]>();
 
   for (const project of projects.values()) {
-    const result = findUncoveredFiles(compiler, project);
+    const result = checkProject(compiler, project.configPath, project.filePaths);
 
     if (result.status !== 0) {
       return result.status;
     }
 
-    if (result.files.length > 0) {
-      uncoveredProjects.set(project, result.files);
+    if (result.uncoveredFiles.length > 0) {
+      uncoveredProjects.set(project, result.uncoveredFiles);
     }
   }
 
   if (uncoveredProjects.size > 0) {
     reportUncoveredFiles(repositoryRoot, uncoveredProjects);
     return 1;
-  }
-
-  for (const project of projects.values()) {
-    const status = typecheckProject(compiler, project.configPath);
-
-    if (status !== 0) {
-      return status;
-    }
   }
 
   return 0;

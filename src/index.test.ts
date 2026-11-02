@@ -44,6 +44,25 @@ function createProject(
   return root;
 }
 
+function createSolutionProject(files: Record<string, string>): string {
+  const root = createProject(files);
+  writeFileSync(
+    path.join(root, "tsconfig.json"),
+    `${JSON.stringify({ files: [], references: [{ path: "./tsconfig.node.json" }, { path: "./app" }] })}\n`,
+  );
+  writeFileSync(
+    path.join(root, "tsconfig.node.json"),
+    `${JSON.stringify({ compilerOptions: { composite: true, noEmit: true, strict: true }, files: ["node.ts"] })}\n`,
+  );
+  writeFileSync(path.join(root, "node.ts"), "export const node: string = 'ok';\n");
+  mkdirSync(path.join(root, "app"));
+  writeFileSync(
+    path.join(root, "app/tsconfig.json"),
+    `${JSON.stringify({ compilerOptions: { composite: true, noEmit: true, strict: true }, include: ["../src"] })}\n`,
+  );
+  return root;
+}
+
 function runCli(cwd: string, files: string[], compilerVersion: 6 | 7 = 7) {
   const compilerDirectory = path.join(cwd, "compiler-bin");
   const compilerName = compilerVersion === 6 ? "tsc6" : "tsc";
@@ -72,25 +91,13 @@ function writeCompiler(directory: string, name: "tsc" | "tsc6", output: string, 
   if (process.platform === "win32") {
     writeFileSync(
       path.join(directory, `${name}.CMD`),
-      [
-        "@echo off",
-        `@if "%3"=="--listFilesOnly" echo ${projectFile}`,
-        `@if not "%3"=="--listFilesOnly" echo ${output}`,
-        `@if not "%3"=="--listFilesOnly" exit /b ${status}`,
-        "",
-      ].join("\r\n"),
+      ["@echo off", `@echo ${output}`, `@echo ${projectFile}`, `@exit /b ${status}`, ""].join("\r\n"),
     );
   } else {
     const compilerPath = path.join(directory, name);
     writeFileSync(
       compilerPath,
-      [
-        "#!/bin/sh",
-        `if [ "$3" = "--listFilesOnly" ]; then printf '%s\\n' '${projectFile}'; exit 0; fi`,
-        `printf '%s\\n' '${output}'`,
-        `exit ${status}`,
-        "",
-      ].join("\n"),
+      ["#!/bin/sh", `printf '%s\\n' '${output}' '${projectFile}'`, `exit ${status}`, ""].join("\n"),
     );
     chmodSync(compilerPath, 0o755);
   }
@@ -139,6 +146,15 @@ describe.each([6, 7] as const)("TypeScript %s", (compilerVersion) => {
     expect(result.stderr).toContain("tsconfig.json:\n  test/excluded.ts");
   });
 
+  it("checks the referenced project of a solution-style config", () => {
+    const root = createSolutionProject({ "src/index.ts": "export const value: string = 1;\n" });
+
+    const result = runCli(root, ["src/index.ts"], compilerVersion);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("TS2322");
+  });
+
   it("accepts an excluded staged file reached through an import", () => {
     const root = createProject({
       "src/index.ts": 'export { value } from "../test/helper.js";\n',
@@ -185,7 +201,7 @@ it("stops after the first failing project", () => {
   expect(output).not.toContain("TS2304");
 });
 
-it("reports every uncovered staged file before typechecking", () => {
+it("reports every uncovered staged file", () => {
   const root = createTemporaryDirectory("tsc-staged-uncovered-");
   const first = createProject(
     { "src/index.ts": "export {};\n", "test/first.ts": "export {};\n" },
@@ -213,6 +229,44 @@ it("checks a project selected only by a deleted file", () => {
   const result = runCli(root, ["src/deleted.ts"]);
 
   expect(result.status, result.stdout + result.stderr).toBe(0);
+});
+
+it("checks every referenced project when a file is deleted from a solution-style config", () => {
+  const root = createSolutionProject({ "src/index.ts": 'export { value } from "./deleted.js";\n' });
+
+  const result = runCli(root, ["src/deleted.ts"]);
+
+  expect(result.status).not.toBe(0);
+  expect(result.stdout + result.stderr).toContain("TS2307");
+});
+
+it("rejects a staged file outside every referenced project", () => {
+  const root = createSolutionProject({ "src/index.ts": "export {};\n", "test/excluded.ts": "export {};\n" });
+
+  const result = runCli(root, ["test/excluded.ts"]);
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("tsconfig.json:\n  test/excluded.ts");
+});
+
+it.skipIf(process.platform === "win32")("handles compiler output larger than the default buffer", () => {
+  const root = createProject({ "src/index.ts": "export {};\n" });
+  const compilerDirectory = path.join(root, "compiler-bin");
+  const compilerPath = path.join(compilerDirectory, "tsc");
+  mkdirSync(compilerDirectory);
+  writeFileSync(
+    compilerPath,
+    `#!/bin/sh\ni=0\nwhile [ $i -lt 20000 ]; do echo '${path.join(root, "src/index.ts")}'; i=$((i + 1)); done\n`,
+  );
+  chmodSync(compilerPath, 0o755);
+
+  const result = spawnSync(process.execPath, [cliPath, "src/index.ts"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: compilerDirectory },
+  });
+
+  expect(result.status, result.stderr).toBe(0);
 });
 
 it("preserves compiler errors from project membership discovery", () => {
