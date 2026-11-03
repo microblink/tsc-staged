@@ -11,6 +11,8 @@ catalog:
   vite-plus: 1.4.0
 
 overrides:
+  test-exclude>glob: ~14.0.3
+  test-exclude>minimatch: ~11.0.4
   vite: "catalog:"
 
 peerDependencyRules:
