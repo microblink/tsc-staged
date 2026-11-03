@@ -14,6 +14,7 @@ interface Compiler {
 
 interface ProjectConfig {
   compilerOptions?: { rootDir?: string };
+  files?: string[];
   references?: { path: string }[];
 }
 
@@ -154,6 +155,10 @@ function runCheck(
   process.stdout.write(messages.join("\n"));
   process.stderr.write(result.stderr);
 
+  if (messages.some((message) => message.includes("TS6305"))) {
+    console.error("Referenced projects are not built. Run tsc --build once, then try again.");
+  }
+
   return { status: result.status ?? 1, signal: result.signal, listedFiles };
 }
 
@@ -255,7 +260,7 @@ function checkProject(repositoryRoot: string, compiler: Compiler, configPath: st
     compiler,
     findReferencedConfigs(configPath, config),
     uncoveredFiles,
-    hasDeletedFiles,
+    hasDeletedFiles && (config.files ?? []).length === 0,
   );
 
   if (referenceResult.status !== 0) {

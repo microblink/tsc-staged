@@ -8,5 +8,6 @@
 - Check the referenced projects of a solution-style tsconfig.json
 - Check staged files through the referenced projects of tsconfig.json files in parent directories
 - Check staged files that their nearest project excludes with the compiler options of that project, and skip files outside its rootDir
+- Tell you to run tsc --build when the output of referenced projects is missing
 - Skip files that have no tsconfig.json in the repository and warn about them, while still checking other projects
 - Run in lint-staged, nano-staged, or Vite+ staged configurations for .ts, .tsx, .mts, and .cts files

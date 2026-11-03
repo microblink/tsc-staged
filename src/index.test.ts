@@ -279,6 +279,38 @@ it("checks a staged file through a project referenced by a parent config", () =>
   expect(result.stdout + result.stderr).toContain("TS2322");
 });
 
+it("explains missing output of referenced projects", () => {
+  const root = createProject({ "src/index.ts": "export {};\n" });
+  const compilerDirectory = path.join(root, "compiler-bin");
+  writeCompiler(compilerDirectory, "tsc", "error TS6305: Output file has not been built from source file.", 2);
+
+  const result = spawnSync(process.execPath, [cliPath, "src/index.ts"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: compilerDirectory },
+  });
+
+  expect(result.status).toBe(2);
+  expect(result.stderr).toContain("Referenced projects are not built. Run tsc --build once, then try again.");
+});
+
+it("does not check the dependencies of a project with a deleted file", () => {
+  const root = createTemporaryDirectory("tsc-staged-deleted-dependency-");
+  createProject({ "src/index.ts": "export const value: string = 1;\n" }, path.join(root, "dependency"), {
+    composite: true,
+    strict: true,
+  });
+  const app = createProject({ "src/index.ts": "export {};\n" }, path.join(root, "app"));
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    `${JSON.stringify({ include: ["src"], references: [{ path: "../dependency" }] })}\n`,
+  );
+
+  const result = runCli(root, ["app/src/deleted.ts"]);
+
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+});
+
 it.skipIf(process.platform === "win32")("handles compiler output larger than the default buffer", () => {
   const root = createProject({ "src/index.ts": "export {};\n" });
   const compilerDirectory = path.join(root, "compiler-bin");

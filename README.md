@@ -61,7 +61,7 @@ tsc --project path/to/tsconfig.json --noEmit
 
 Files without a `tsconfig.json` inside the repository are skipped with a warning. Other affected projects are still checked.
 
-If the nearest `tsconfig.json` does not include a staged file but has `references`, such as a solution-style config with `"files": []`, `tsc-staged` checks the referenced projects that include the file. If a staged file was deleted, it checks all referenced projects.
+If the nearest `tsconfig.json` does not include a staged file but has `references`, such as a solution-style config with `"files": []`, `tsc-staged` checks the referenced projects that include the file. If a staged file was deleted from a solution-style config, it checks all referenced projects.
 
 If a staged file is not part of its nearest project or a referenced project, `tsc-staged` looks at the `tsconfig.json` files in the parent directories. It checks the referenced projects of these configs that include the file, such as a `tsconfig.tests.json` at the repository root. If no project includes the file, such as an excluded test file, `tsc-staged` checks the file with the compiler options of its nearest project. Files outside the `rootDir` of that project are skipped with a warning. Deleted files still select their nearest project.
 
@@ -69,7 +69,7 @@ Each affected project is checked in full, so errors in unstaged files are report
 
 ## Comparison with other tools
 
-- `tsc --build` with project references also checks only the projects that changed. If your monorepo uses project references, you possibly do not need `tsc-staged`. `tsc-staged` runs `tsc --project`, so it does not build referenced projects first.
+- `tsc --build` with project references also checks only the projects that changed. If your monorepo uses project references, you possibly do not need `tsc-staged`. `tsc-staged` runs `tsc --project`, so it does not build referenced projects first. If they are not built, the check fails and `tsc-staged` tells you to run `tsc --build` once.
 - Oxlint and Vite+ can report TypeScript errors with type-aware linting and `typeCheck`. This requires TypeScript 7 and does not support all `tsconfig.json` options. Use `tsc-staged` if you want the result of the TypeScript compiler itself.
 
 ## Contributing
