@@ -277,6 +277,34 @@ it.skipIf(process.platform === "win32")("handles compiler output larger than the
   expect(result.status, result.stderr).toBe(0);
 });
 
+it.skipIf(process.platform === "win32")("removes the temporary config when interrupted", () => {
+  const root = createProject({ "src/index.ts": "export {};\n", "test/excluded.ts": "export {};\n" });
+  const compilerDirectory = path.join(root, "compiler-bin");
+  const compilerPath = path.join(compilerDirectory, "tsc");
+  mkdirSync(compilerDirectory);
+  writeFileSync(
+    compilerPath,
+    [
+      "#!/bin/sh",
+      'case "$2" in',
+      `  tsconfig.json) [ "$3" = --showConfig ] && echo '{}' || echo '${path.join(root, "src/index.ts")}' ;;`,
+      "  *) kill -INT $PPID; kill -INT $$ ;;",
+      "esac",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(compilerPath, 0o755);
+
+  const result = spawnSync(process.execPath, [cliPath, "test/excluded.ts"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: compilerDirectory },
+  });
+
+  expect(result.signal, result.stderr).toBe("SIGINT");
+  expect(readdirSync(root)).not.toContainEqual(expect.stringMatching(/^\.tsconfig/u));
+});
+
 it("preserves compiler errors from project membership discovery", () => {
   const root = createProject({ "src/index.ts": "export {};\n" }, undefined, { unknownCompilerOption: true });
 

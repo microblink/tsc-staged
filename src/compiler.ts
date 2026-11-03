@@ -143,7 +143,10 @@ function listProjectFiles(compiler: Compiler, configPath: string): Set<string> {
   return result.status === 0 ? splitListedFiles(result.stdout).listedFiles : new Set();
 }
 
-function runCheck(compiler: Compiler, configPath: string): { status: number; listedFiles: Set<string> } {
+function runCheck(
+  compiler: Compiler,
+  configPath: string,
+): { status: number; signal: NodeJS.Signals | null; listedFiles: Set<string> } {
   const prettyArgs = process.stdout.isTTY ? ["--pretty"] : [];
   const result = runCompiler(compiler, configPath, ["--noEmit", "--listFiles", ...prettyArgs]);
   const { listedFiles, messages } = splitListedFiles(result.stdout);
@@ -151,8 +154,10 @@ function runCheck(compiler: Compiler, configPath: string): { status: number; lis
   process.stdout.write(messages.join("\n"));
   process.stderr.write(result.stderr);
 
-  return { status: result.status ?? 1, listedFiles };
+  return { status: result.status ?? 1, signal: result.signal, listedFiles };
 }
+
+function ignoreSignal(): void {}
 
 function checkUncoveredFiles(
   compiler: Compiler,
@@ -169,10 +174,20 @@ function checkUncoveredFiles(
     `${JSON.stringify({ extends: `./${path.basename(configPath)}`, files, include: [] })}\n`,
   );
 
+  let signal: NodeJS.Signals | null = null;
+  process.on("SIGINT", ignoreSignal).on("SIGTERM", ignoreSignal);
+
   try {
-    return runCheck(compiler, temporaryConfigPath).status;
+    const result = runCheck(compiler, temporaryConfigPath);
+    signal = result.signal;
+    return result.status;
   } finally {
     rmSync(temporaryConfigPath, { force: true });
+    process.off("SIGINT", ignoreSignal).off("SIGTERM", ignoreSignal);
+
+    if (signal !== null) {
+      process.kill(process.pid, signal);
+    }
   }
 }
 
