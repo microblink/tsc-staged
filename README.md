@@ -63,7 +63,7 @@ Files without a `tsconfig.json` inside the repository are skipped with a warning
 
 If the nearest `tsconfig.json` does not include a staged file but has `references`, such as a solution-style config with `"files": []`, `tsc-staged` checks the referenced projects that include the file. If a staged file was deleted, it checks all referenced projects.
 
-Every existing staged TypeScript file must be part of its nearest project or one of its referenced projects. If a file is excluded, update the project configuration or narrow the staged-file matcher. Deleted files still select their nearest project.
+If a staged file is not part of its nearest project or a referenced project, such as an excluded test file, `tsc-staged` checks the file with the compiler options of its nearest project. Files outside the `rootDir` of that project are skipped with a warning. Deleted files still select their nearest project.
 
 Each affected project is checked in full, so errors in unstaged files are reported as well. Projects are checked sequentially and the command stops on the first failure.
 

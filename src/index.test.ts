@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -133,17 +142,31 @@ describe.each([6, 7] as const)("TypeScript %s", (compilerVersion) => {
     expect(result.status, result.stdout + result.stderr).toBe(0);
   });
 
-  it("rejects a staged file outside the selected compiler program", () => {
+  it("checks a staged file outside the project with the project's options", () => {
     const root = createProject({
+      "src/env.d.ts": "declare const projectGlobal: string;\n",
       "src/index.ts": "export {};\n",
-      "test/excluded.ts": "export {};\n",
+      "test/excluded.ts": "export const value: number = projectGlobal;\n",
     });
 
     const result = runCli(root, ["test/excluded.ts"], compilerVersion);
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("Staged TypeScript files are not included in their nearest project:");
-    expect(result.stderr).toContain("tsconfig.json:\n  test/excluded.ts");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("TS2322");
+    expect(readdirSync(root)).not.toContainEqual(expect.stringMatching(/^\.tsconfig/u));
+  });
+
+  it("skips a staged file outside the project's rootDir", () => {
+    const root = createProject(
+      { "src/index.ts": "export {};\n", "vite.config.ts": "export const value: string = 1;\n" },
+      undefined,
+      { rootDir: "src", strict: true },
+    );
+
+    const result = runCli(root, ["vite.config.ts"], compilerVersion);
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stderr).toContain("Skipping staged typecheck for vite.config.ts: outside rootDir");
   });
 
   it("checks the referenced project of a solution-style config", () => {
@@ -201,24 +224,6 @@ it("stops after the first failing project", () => {
   expect(output).not.toContain("TS2304");
 });
 
-it("reports every uncovered staged file", () => {
-  const root = createTemporaryDirectory("tsc-staged-uncovered-");
-  const first = createProject(
-    { "src/index.ts": "export {};\n", "test/first.ts": "export {};\n" },
-    path.join(root, "first"),
-  );
-  const second = createProject(
-    { "src/index.ts": "export {};\n", "test/second.ts": "export {};\n" },
-    path.join(root, "second"),
-  );
-  const result = runCli(root, [path.join(first, "test/first.ts"), path.join(second, "test/second.ts")]);
-
-  expect(result.status).toBe(1);
-  expect(result.stderr).toContain(
-    ["first/tsconfig.json:", "  first/test/first.ts", "second/tsconfig.json:", "  second/test/second.ts"].join("\n"),
-  );
-});
-
 it("checks a project selected only by a deleted file", () => {
   const root = createProject({
     "src/index.ts": "export {};\n",
@@ -240,13 +245,16 @@ it("checks every referenced project when a file is deleted from a solution-style
   expect(result.stdout + result.stderr).toContain("TS2307");
 });
 
-it("rejects a staged file outside every referenced project", () => {
-  const root = createSolutionProject({ "src/index.ts": "export {};\n", "test/excluded.ts": "export {};\n" });
+it("checks a staged file outside every referenced project", () => {
+  const root = createSolutionProject({
+    "src/index.ts": "export {};\n",
+    "test/excluded.ts": "export const value: string = 1;\n",
+  });
 
   const result = runCli(root, ["test/excluded.ts"]);
 
-  expect(result.status).toBe(1);
-  expect(result.stderr).toContain("tsconfig.json:\n  test/excluded.ts");
+  expect(result.status).not.toBe(0);
+  expect(result.stdout + result.stderr).toContain("TS2322");
 });
 
 it.skipIf(process.platform === "win32")("handles compiler output larger than the default buffer", () => {
@@ -276,7 +284,6 @@ it("preserves compiler errors from project membership discovery", () => {
 
   expect(result.status).not.toBe(0);
   expect(result.stdout + result.stderr).toContain("unknownCompilerOption");
-  expect(result.stderr).not.toContain("not included in their nearest project");
 });
 
 it("runs a symlinked config from its logical directory", () => {

@@ -1,8 +1,9 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { accessSync, constants, existsSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { type AffectedProject, findAffectedProjects } from "./path.ts";
+import { findAffectedProjects } from "./path.ts";
 
 interface Compiler {
   command: "tsc" | "tsc6";
@@ -11,9 +12,9 @@ interface Compiler {
   pathEnvironment: string;
 }
 
-interface ProjectResult {
-  status: number;
-  uncoveredFiles: string[];
+interface ProjectConfig {
+  compilerOptions?: { rootDir?: string };
+  references?: { path: string }[];
 }
 
 function findEnvironmentKey(name: string): string | undefined {
@@ -118,15 +119,17 @@ function splitListedFiles(output: string): { listedFiles: Set<string>; messages:
   return { listedFiles, messages };
 }
 
-function findReferencedConfigs(compiler: Compiler, configPath: string): string[] {
+function isInsideDirectory(filePath: string, directoryPath: string): boolean {
+  const relative = path.relative(directoryPath, filePath);
+  return relative !== "" && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function readConfig(compiler: Compiler, configPath: string): ProjectConfig {
   const result = runCompiler(compiler, configPath, ["--showConfig"]);
+  return result.status === 0 ? JSON.parse(result.stdout) : {};
+}
 
-  if (result.status !== 0) {
-    return [];
-  }
-
-  const config: { references?: { path: string }[] } = JSON.parse(result.stdout);
-
+function findReferencedConfigs(configPath: string, config: ProjectConfig): string[] {
   return (config.references ?? []).map((reference) => {
     const referencePath = path.resolve(path.dirname(configPath), reference.path);
     return statSync(referencePath, { throwIfNoEntry: false })?.isDirectory()
@@ -140,17 +143,44 @@ function listProjectFiles(compiler: Compiler, configPath: string): Set<string> {
   return result.status === 0 ? splitListedFiles(result.stdout).listedFiles : new Set();
 }
 
-function checkProject(compiler: Compiler, configPath: string, filePaths: string[]): ProjectResult {
+function runCheck(compiler: Compiler, configPath: string): { status: number; listedFiles: Set<string> } {
   const prettyArgs = process.stdout.isTTY ? ["--pretty"] : [];
   const result = runCompiler(compiler, configPath, ["--noEmit", "--listFiles", ...prettyArgs]);
-  const status = result.status ?? 1;
   const { listedFiles, messages } = splitListedFiles(result.stdout);
 
   process.stdout.write(messages.join("\n"));
   process.stderr.write(result.stderr);
 
+  return { status: result.status ?? 1, listedFiles };
+}
+
+function checkUncoveredFiles(
+  compiler: Compiler,
+  configPath: string,
+  filePaths: string[],
+  declarationFiles: string[],
+): number {
+  const configDirectory = path.dirname(configPath);
+  const temporaryConfigPath = path.join(configDirectory, `.tsconfig.tsc-staged-${randomUUID()}.json`);
+  const files = [...filePaths, ...declarationFiles];
+
+  writeFileSync(
+    temporaryConfigPath,
+    `${JSON.stringify({ extends: `./${path.basename(configPath)}`, files, include: [] })}\n`,
+  );
+
+  try {
+    return runCheck(compiler, temporaryConfigPath).status;
+  } finally {
+    rmSync(temporaryConfigPath, { force: true });
+  }
+}
+
+function checkProject(repositoryRoot: string, compiler: Compiler, configPath: string, filePaths: string[]): number {
+  const { status, listedFiles } = runCheck(compiler, configPath);
+
   if (status !== 0) {
-    return { status, uncoveredFiles: [] };
+    return status;
   }
 
   const existingFiles = filePaths.filter((filePath) => existsSync(filePath));
@@ -158,39 +188,48 @@ function checkProject(compiler: Compiler, configPath: string, filePaths: string[
   let uncoveredFiles = existingFiles.filter((filePath) => !listedFiles.has(normalizePath(filePath)));
 
   if (uncoveredFiles.length === 0 && !hasDeletedFiles) {
-    return { status, uncoveredFiles };
+    return status;
   }
 
-  for (const referencedConfig of findReferencedConfigs(compiler, configPath)) {
+  const config = readConfig(compiler, configPath);
+
+  for (const referencedConfig of findReferencedConfigs(configPath, config)) {
     const referencedFiles = listProjectFiles(compiler, referencedConfig);
     const coveredFiles = uncoveredFiles.filter((filePath) => referencedFiles.has(normalizePath(filePath)));
 
     if (coveredFiles.length > 0 || hasDeletedFiles) {
-      const referenceResult = checkProject(compiler, referencedConfig, coveredFiles);
+      const referenceStatus = checkProject(repositoryRoot, compiler, referencedConfig, coveredFiles);
 
-      if (referenceResult.status !== 0) {
-        return referenceResult;
+      if (referenceStatus !== 0) {
+        return referenceStatus;
       }
 
       uncoveredFiles = uncoveredFiles.filter((filePath) => !coveredFiles.includes(filePath));
     }
   }
 
-  return { status, uncoveredFiles };
-}
-
-function reportUncoveredFiles(repositoryRoot: string, uncoveredProjects: Map<AffectedProject, string[]>): void {
-  console.error("Staged TypeScript files are not included in their nearest project:");
-
-  for (const [project, filePaths] of uncoveredProjects) {
-    console.error(`${relativePath(repositoryRoot, project.configPath)}:`);
-
-    for (const filePath of filePaths) {
-      console.error(`  ${relativePath(repositoryRoot, filePath)}`);
+  const rootDir = config.compilerOptions?.rootDir;
+  const rootDirectory = rootDir === undefined ? undefined : path.resolve(path.dirname(configPath), rootDir);
+  const normalizedRootDirectory =
+    rootDirectory !== undefined && existsSync(rootDirectory) ? normalizePath(rootDirectory) : rootDirectory;
+  const checkableFiles = uncoveredFiles.filter((filePath) => {
+    if (normalizedRootDirectory === undefined || isInsideDirectory(normalizePath(filePath), normalizedRootDirectory)) {
+      return true;
     }
+
+    console.warn(`Skipping staged typecheck for ${relativePath(repositoryRoot, filePath)}: outside rootDir`);
+    return false;
+  });
+
+  if (checkableFiles.length === 0) {
+    return status;
   }
 
-  console.error("Update the project configuration or exclude these files from the staged matcher.");
+  const declarationFiles = [...listedFiles].filter(
+    (filePath) => /\.d\.[cm]?ts$/u.test(filePath) && !filePath.split(path.sep).includes("node_modules"),
+  );
+
+  return checkUncoveredFiles(compiler, configPath, checkableFiles, declarationFiles);
 }
 
 export function typecheckProjects(repositoryRoot: string, filePaths: string[], extensions: Set<string>): number {
@@ -205,23 +244,13 @@ export function typecheckProjects(repositoryRoot: string, filePaths: string[], e
   }
 
   const compiler = findCompiler(repositoryRoot);
-  const uncoveredProjects = new Map<AffectedProject, string[]>();
 
   for (const project of projects.values()) {
-    const result = checkProject(compiler, project.configPath, project.filePaths);
+    const status = checkProject(repositoryRoot, compiler, project.configPath, project.filePaths);
 
-    if (result.status !== 0) {
-      return result.status;
+    if (status !== 0) {
+      return status;
     }
-
-    if (result.uncoveredFiles.length > 0) {
-      uncoveredProjects.set(project, result.uncoveredFiles);
-    }
-  }
-
-  if (uncoveredProjects.size > 0) {
-    reportUncoveredFiles(repositoryRoot, uncoveredProjects);
-    return 1;
   }
 
   return 0;
