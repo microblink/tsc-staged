@@ -121,7 +121,7 @@ function splitListedFiles(output: string): { listedFiles: Set<string>; messages:
 
 function isInsideDirectory(filePath: string, directoryPath: string): boolean {
   const relative = path.relative(directoryPath, filePath);
-  return relative !== "" && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 function readConfig(compiler: Compiler, configPath: string): ProjectConfig {
@@ -191,6 +191,49 @@ function checkUncoveredFiles(
   }
 }
 
+function findAncestorConfigs(repositoryRoot: string, configPath: string): string[] {
+  const ancestorConfigs: string[] = [];
+  let directory = path.dirname(configPath);
+
+  while (isInsideDirectory(directory, repositoryRoot)) {
+    directory = path.dirname(directory);
+    const ancestorConfig = path.join(directory, "tsconfig.json");
+
+    if (existsSync(ancestorConfig)) {
+      ancestorConfigs.push(ancestorConfig);
+    }
+  }
+
+  return ancestorConfigs;
+}
+
+function checkReferences(
+  repositoryRoot: string,
+  compiler: Compiler,
+  referencedConfigs: string[],
+  filePaths: string[],
+  checkAll: boolean,
+): { status: number; uncoveredFiles: string[] } {
+  let uncoveredFiles = filePaths;
+
+  for (const referencedConfig of referencedConfigs) {
+    const referencedFiles = listProjectFiles(compiler, referencedConfig);
+    const coveredFiles = uncoveredFiles.filter((filePath) => referencedFiles.has(normalizePath(filePath)));
+
+    if (coveredFiles.length > 0 || checkAll) {
+      const status = checkProject(repositoryRoot, compiler, referencedConfig, coveredFiles);
+
+      if (status !== 0) {
+        return { status, uncoveredFiles };
+      }
+
+      uncoveredFiles = uncoveredFiles.filter((filePath) => !coveredFiles.includes(filePath));
+    }
+  }
+
+  return { status: 0, uncoveredFiles };
+}
+
 function checkProject(repositoryRoot: string, compiler: Compiler, configPath: string, filePaths: string[]): number {
   const { status, listedFiles } = runCheck(compiler, configPath);
 
@@ -207,20 +250,37 @@ function checkProject(repositoryRoot: string, compiler: Compiler, configPath: st
   }
 
   const config = readConfig(compiler, configPath);
+  const referenceResult = checkReferences(
+    repositoryRoot,
+    compiler,
+    findReferencedConfigs(configPath, config),
+    uncoveredFiles,
+    hasDeletedFiles,
+  );
 
-  for (const referencedConfig of findReferencedConfigs(configPath, config)) {
-    const referencedFiles = listProjectFiles(compiler, referencedConfig);
-    const coveredFiles = uncoveredFiles.filter((filePath) => referencedFiles.has(normalizePath(filePath)));
+  if (referenceResult.status !== 0) {
+    return referenceResult.status;
+  }
 
-    if (coveredFiles.length > 0 || hasDeletedFiles) {
-      const referenceStatus = checkProject(repositoryRoot, compiler, referencedConfig, coveredFiles);
+  uncoveredFiles = referenceResult.uncoveredFiles;
 
-      if (referenceStatus !== 0) {
-        return referenceStatus;
-      }
-
-      uncoveredFiles = uncoveredFiles.filter((filePath) => !coveredFiles.includes(filePath));
+  for (const ancestorConfig of findAncestorConfigs(repositoryRoot, configPath)) {
+    if (uncoveredFiles.length === 0) {
+      break;
     }
+
+    const enclosingConfigs = findReferencedConfigs(ancestorConfig, readConfig(compiler, ancestorConfig)).filter(
+      (referencedConfig) =>
+        referencedConfig !== configPath &&
+        uncoveredFiles.some((filePath) => isInsideDirectory(filePath, path.dirname(referencedConfig))),
+    );
+    const ancestorResult = checkReferences(repositoryRoot, compiler, enclosingConfigs, uncoveredFiles, false);
+
+    if (ancestorResult.status !== 0) {
+      return ancestorResult.status;
+    }
+
+    uncoveredFiles = ancestorResult.uncoveredFiles;
   }
 
   const rootDir = config.compilerOptions?.rootDir;

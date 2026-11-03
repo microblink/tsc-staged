@@ -257,6 +257,28 @@ it("checks a staged file outside every referenced project", () => {
   expect(result.stdout + result.stderr).toContain("TS2322");
 });
 
+it("checks a staged file through a project referenced by a parent config", () => {
+  const root = createTemporaryDirectory("tsc-staged-parent-");
+  createProject(
+    { "src/index.ts": "export {};\n", "test/index.test.ts": "export const value: string = 1;\n" },
+    path.join(root, "packages/a"),
+    { rootDir: "src", strict: true },
+  );
+  writeFileSync(
+    path.join(root, "tsconfig.json"),
+    `${JSON.stringify({ files: [], references: [{ path: "./packages/a" }, { path: "./tsconfig.tests.json" }] })}\n`,
+  );
+  writeFileSync(
+    path.join(root, "tsconfig.tests.json"),
+    `${JSON.stringify({ compilerOptions: { strict: true }, include: ["packages/*/test"] })}\n`,
+  );
+
+  const result = runCli(root, ["packages/a/test/index.test.ts"]);
+
+  expect(result.status).not.toBe(0);
+  expect(result.stdout + result.stderr).toContain("TS2322");
+});
+
 it.skipIf(process.platform === "win32")("handles compiler output larger than the default buffer", () => {
   const root = createProject({ "src/index.ts": "export {};\n" });
   const compilerDirectory = path.join(root, "compiler-bin");
