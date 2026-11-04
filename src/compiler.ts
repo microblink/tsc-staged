@@ -12,6 +12,12 @@ interface Compiler {
   pathEnvironment: string;
 }
 
+interface Run {
+  repositoryRoot: string;
+  compiler: Compiler;
+  passedProjects: Map<string, Map<string, string>>;
+}
+
 interface ProjectConfig {
   compilerOptions?: { rootDir?: string };
   files?: string[];
@@ -105,13 +111,13 @@ function relativePath(from: string, to: string): string {
   return path.relative(from, to).replaceAll(path.sep, "/");
 }
 
-function splitListedFiles(output: string): { listedFiles: Set<string>; messages: string[] } {
-  const listedFiles = new Set<string>();
+function splitListedFiles(output: string): { listedFiles: Map<string, string>; messages: string[] } {
+  const listedFiles = new Map<string, string>();
   const messages: string[] = [];
 
   for (const line of output.split(/\r?\n/u)) {
     if (path.isAbsolute(line) && existsSync(line)) {
-      listedFiles.add(normalizePath(line));
+      listedFiles.set(normalizePath(line), line);
     } else {
       messages.push(line);
     }
@@ -139,15 +145,15 @@ function findReferencedConfigs(configPath: string, config: ProjectConfig): strin
   });
 }
 
-function listProjectFiles(compiler: Compiler, configPath: string): Set<string> {
+function listProjectFiles(compiler: Compiler, configPath: string): Map<string, string> {
   const result = runCompiler(compiler, configPath, ["--listFilesOnly"]);
-  return result.status === 0 ? splitListedFiles(result.stdout).listedFiles : new Set();
+  return result.status === 0 ? splitListedFiles(result.stdout).listedFiles : new Map();
 }
 
 function runCheck(
   compiler: Compiler,
   configPath: string,
-): { status: number; signal: NodeJS.Signals | null; listedFiles: Set<string> } {
+): { status: number; signal: NodeJS.Signals | null; listedFiles: Map<string, string> } {
   const prettyArgs = process.stdout.isTTY ? ["--pretty"] : [];
   const result = runCompiler(compiler, configPath, ["--noEmit", "--listFiles", ...prettyArgs]);
   const { listedFiles, messages } = splitListedFiles(result.stdout);
@@ -176,11 +182,16 @@ function checkUncoveredFiles(
 
   writeFileSync(
     temporaryConfigPath,
-    `${JSON.stringify({ extends: `./${path.basename(configPath)}`, files, include: [] })}\n`,
+    `${JSON.stringify({
+      extends: `./${path.basename(configPath)}`,
+      compilerOptions: { composite: false, incremental: false },
+      files,
+      include: [],
+    })}\n`,
   );
 
   let signal: NodeJS.Signals | null = null;
-  process.on("SIGINT", ignoreSignal).on("SIGTERM", ignoreSignal);
+  process.on("SIGINT", ignoreSignal);
 
   try {
     const result = runCheck(compiler, temporaryConfigPath);
@@ -188,7 +199,7 @@ function checkUncoveredFiles(
     return result.status;
   } finally {
     rmSync(temporaryConfigPath, { force: true });
-    process.off("SIGINT", ignoreSignal).off("SIGTERM", ignoreSignal);
+    process.off("SIGINT", ignoreSignal);
 
     if (signal !== null) {
       process.kill(process.pid, signal);
@@ -213,8 +224,7 @@ function findAncestorConfigs(repositoryRoot: string, configPath: string): string
 }
 
 function checkReferences(
-  repositoryRoot: string,
-  compiler: Compiler,
+  run: Run,
   referencedConfigs: string[],
   filePaths: string[],
   checkAll: boolean,
@@ -222,11 +232,12 @@ function checkReferences(
   let uncoveredFiles = filePaths;
 
   for (const referencedConfig of referencedConfigs) {
-    const referencedFiles = listProjectFiles(compiler, referencedConfig);
+    const referencedFiles =
+      run.passedProjects.get(referencedConfig) ?? listProjectFiles(run.compiler, referencedConfig);
     const coveredFiles = uncoveredFiles.filter((filePath) => referencedFiles.has(normalizePath(filePath)));
 
     if (coveredFiles.length > 0 || checkAll) {
-      const status = checkProject(repositoryRoot, compiler, referencedConfig, coveredFiles);
+      const status = checkProject(run, referencedConfig, coveredFiles);
 
       if (status !== 0) {
         return { status, uncoveredFiles };
@@ -239,12 +250,17 @@ function checkReferences(
   return { status: 0, uncoveredFiles };
 }
 
-function checkProject(repositoryRoot: string, compiler: Compiler, configPath: string, filePaths: string[]): number {
-  const { status, listedFiles } = runCheck(compiler, configPath);
+function checkProject(run: Run, configPath: string, filePaths: string[]): number {
+  const { repositoryRoot, compiler } = run;
+  const passedFiles = run.passedProjects.get(configPath);
+  const { status, listedFiles } =
+    passedFiles === undefined ? runCheck(compiler, configPath) : { status: 0, listedFiles: passedFiles };
 
   if (status !== 0) {
     return status;
   }
+
+  run.passedProjects.set(configPath, listedFiles);
 
   const existingFiles = filePaths.filter((filePath) => existsSync(filePath));
   const hasDeletedFiles = existingFiles.length < filePaths.length;
@@ -255,13 +271,9 @@ function checkProject(repositoryRoot: string, compiler: Compiler, configPath: st
   }
 
   const config = readConfig(compiler, configPath);
-  const referenceResult = checkReferences(
-    repositoryRoot,
-    compiler,
-    findReferencedConfigs(configPath, config),
-    uncoveredFiles,
-    hasDeletedFiles && (config.files ?? []).length === 0,
-  );
+  const referencedConfigs = findReferencedConfigs(configPath, config);
+  const isSolution = referencedConfigs.length > 0 && (config.files ?? []).length === 0;
+  const referenceResult = checkReferences(run, referencedConfigs, uncoveredFiles, hasDeletedFiles && isSolution);
 
   if (referenceResult.status !== 0) {
     return referenceResult.status;
@@ -279,13 +291,21 @@ function checkProject(repositoryRoot: string, compiler: Compiler, configPath: st
         referencedConfig !== configPath &&
         uncoveredFiles.some((filePath) => isInsideDirectory(filePath, path.dirname(referencedConfig))),
     );
-    const ancestorResult = checkReferences(repositoryRoot, compiler, enclosingConfigs, uncoveredFiles, false);
+    const ancestorResult = checkReferences(run, enclosingConfigs, uncoveredFiles, false);
 
     if (ancestorResult.status !== 0) {
       return ancestorResult.status;
     }
 
     uncoveredFiles = ancestorResult.uncoveredFiles;
+  }
+
+  if (isSolution) {
+    for (const filePath of uncoveredFiles) {
+      console.warn(`Skipping staged typecheck for ${relativePath(repositoryRoot, filePath)}: no project includes it`);
+    }
+
+    return status;
   }
 
   const rootDir = config.compilerOptions?.rootDir;
@@ -305,7 +325,7 @@ function checkProject(repositoryRoot: string, compiler: Compiler, configPath: st
     return status;
   }
 
-  const declarationFiles = [...listedFiles].filter(
+  const declarationFiles = [...listedFiles.values()].filter(
     (filePath) => /\.d\.[cm]?ts$/u.test(filePath) && !filePath.split(path.sep).includes("node_modules"),
   );
 
@@ -323,10 +343,10 @@ export function typecheckProjects(repositoryRoot: string, filePaths: string[], e
     return 0;
   }
 
-  const compiler = findCompiler(repositoryRoot);
+  const run: Run = { repositoryRoot, compiler: findCompiler(repositoryRoot), passedProjects: new Map() };
 
   for (const project of projects.values()) {
-    const status = checkProject(repositoryRoot, compiler, project.configPath, project.filePaths);
+    const status = checkProject(run, project.configPath, project.filePaths);
 
     if (status !== 0) {
       return status;
