@@ -1,5 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -133,17 +143,48 @@ describe.each([6, 7] as const)("TypeScript %s", (compilerVersion) => {
     expect(result.status, result.stdout + result.stderr).toBe(0);
   });
 
-  it("rejects a staged file outside the selected compiler program", () => {
+  it("checks a staged file outside the project with the project's options", () => {
     const root = createProject({
+      "src/env.d.ts": "declare const projectGlobal: string;\n",
       "src/index.ts": "export {};\n",
-      "test/excluded.ts": "export {};\n",
+      "test/excluded.ts": "export const value: number = projectGlobal;\n",
     });
 
     const result = runCli(root, ["test/excluded.ts"], compilerVersion);
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("Staged TypeScript files are not included in their nearest project:");
-    expect(result.stderr).toContain("tsconfig.json:\n  test/excluded.ts");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("TS2322");
+    expect(readdirSync(root)).not.toContainEqual(expect.stringMatching(/^\.tsconfig/u));
+  });
+
+  it("leaves no build info behind for an incremental project", () => {
+    const root = createProject(
+      { "src/index.ts": "export {};\n", "test/excluded.ts": "export const value: string = 1;\n" },
+      undefined,
+      {
+        incremental: true,
+        strict: true,
+      },
+    );
+
+    const result = runCli(root, ["test/excluded.ts"], compilerVersion);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("TS2322");
+    expect(readdirSync(root)).not.toContainEqual(expect.stringMatching(/^\.tsconfig/u));
+  });
+
+  it("skips a staged file outside the project's rootDir", () => {
+    const root = createProject(
+      { "src/index.ts": "export {};\n", "vite.config.ts": "export const value: string = 1;\n" },
+      undefined,
+      { rootDir: "src", strict: true },
+    );
+
+    const result = runCli(root, ["vite.config.ts"], compilerVersion);
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stderr).toContain("Skipping staged typecheck for vite.config.ts: outside rootDir");
   });
 
   it("checks the referenced project of a solution-style config", () => {
@@ -201,24 +242,6 @@ it("stops after the first failing project", () => {
   expect(output).not.toContain("TS2304");
 });
 
-it("reports every uncovered staged file", () => {
-  const root = createTemporaryDirectory("tsc-staged-uncovered-");
-  const first = createProject(
-    { "src/index.ts": "export {};\n", "test/first.ts": "export {};\n" },
-    path.join(root, "first"),
-  );
-  const second = createProject(
-    { "src/index.ts": "export {};\n", "test/second.ts": "export {};\n" },
-    path.join(root, "second"),
-  );
-  const result = runCli(root, [path.join(first, "test/first.ts"), path.join(second, "test/second.ts")]);
-
-  expect(result.status).toBe(1);
-  expect(result.stderr).toContain(
-    ["first/tsconfig.json:", "  first/test/first.ts", "second/tsconfig.json:", "  second/test/second.ts"].join("\n"),
-  );
-});
-
 it("checks a project selected only by a deleted file", () => {
   const root = createProject({
     "src/index.ts": "export {};\n",
@@ -240,13 +263,113 @@ it("checks every referenced project when a file is deleted from a solution-style
   expect(result.stdout + result.stderr).toContain("TS2307");
 });
 
-it("rejects a staged file outside every referenced project", () => {
-  const root = createSolutionProject({ "src/index.ts": "export {};\n", "test/excluded.ts": "export {};\n" });
+it("skips a staged file outside every referenced project", () => {
+  const root = createSolutionProject({
+    "src/index.ts": "export {};\n",
+    "test/excluded.tsx": "export const element = <div />;\n",
+  });
 
-  const result = runCli(root, ["test/excluded.ts"]);
+  const result = runCli(root, ["test/excluded.tsx"]);
 
-  expect(result.status).toBe(1);
-  expect(result.stderr).toContain("tsconfig.json:\n  test/excluded.ts");
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+  expect(result.stderr).toContain("Skipping staged typecheck for test/excluded.tsx: no project includes it");
+});
+
+it("checks a staged file through a project referenced by a parent config", () => {
+  const root = createTemporaryDirectory("tsc-staged-parent-");
+  createProject(
+    { "src/index.ts": "export {};\n", "test/index.test.ts": "export const value: string = 1;\n" },
+    path.join(root, "packages/a"),
+    { rootDir: "src", strict: true },
+  );
+  writeFileSync(
+    path.join(root, "tsconfig.json"),
+    `${JSON.stringify({ files: [], references: [{ path: "./packages/a" }, { path: "./tsconfig.tests.json" }] })}\n`,
+  );
+  writeFileSync(
+    path.join(root, "tsconfig.tests.json"),
+    `${JSON.stringify({ compilerOptions: { strict: true }, include: ["packages/*/test"] })}\n`,
+  );
+
+  const result = runCli(root, ["packages/a/test/index.test.ts"]);
+
+  expect(result.status).not.toBe(0);
+  expect(result.stdout + result.stderr).toContain("TS2322");
+});
+
+it.skipIf(process.platform === "win32")("checks a project referenced by a parent config only once", () => {
+  const root = createTemporaryDirectory("tsc-staged-parent-once-");
+  for (const name of ["a", "b"]) {
+    createProject(
+      { "src/index.ts": "export {};\n", "test/index.test.ts": "export const value: string = 'ok';\n" },
+      path.join(root, `packages/${name}`),
+      { rootDir: "src", strict: true },
+    );
+  }
+  writeFileSync(
+    path.join(root, "tsconfig.json"),
+    `${JSON.stringify({ files: [], references: [{ path: "./tsconfig.tests.json" }] })}\n`,
+  );
+  writeFileSync(
+    path.join(root, "tsconfig.tests.json"),
+    `${JSON.stringify({ compilerOptions: { strict: true }, include: ["packages/*/test"] })}\n`,
+  );
+  const compilerDirectory = path.join(root, "compiler-bin");
+  const logPath = path.join(root, "compiler.log");
+  mkdirSync(compilerDirectory);
+  writeFileSync(
+    path.join(compilerDirectory, "tsc"),
+    `#!/bin/sh\necho "$*" >> '${logPath}'\nexec '${compilerBins[7]}' "$@"\n`,
+  );
+  chmodSync(path.join(compilerDirectory, "tsc"), 0o755);
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "packages/a/test/index.test.ts", "packages/b/test/index.test.ts"],
+    {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, PATH: [compilerDirectory, process.env.PATH].join(path.delimiter) },
+    },
+  );
+  const checks = readFileSync(logPath, "utf8")
+    .split("\n")
+    .filter((line) => line.startsWith("--project tsconfig.tests.json --noEmit"));
+
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+  expect(checks).toHaveLength(1);
+});
+
+it("explains missing output of referenced projects", () => {
+  const root = createProject({ "src/index.ts": "export {};\n" });
+  const compilerDirectory = path.join(root, "compiler-bin");
+  writeCompiler(compilerDirectory, "tsc", "error TS6305: Output file has not been built from source file.", 2);
+
+  const result = spawnSync(process.execPath, [cliPath, "src/index.ts"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: compilerDirectory },
+  });
+
+  expect(result.status).toBe(2);
+  expect(result.stderr).toContain("Referenced projects are not built. Run tsc --build once, then try again.");
+});
+
+it("does not check the dependencies of a project with a deleted file", () => {
+  const root = createTemporaryDirectory("tsc-staged-deleted-dependency-");
+  createProject({ "src/index.ts": "export const value: string = 1;\n" }, path.join(root, "dependency"), {
+    composite: true,
+    strict: true,
+  });
+  const app = createProject({ "src/index.ts": "export {};\n" }, path.join(root, "app"));
+  writeFileSync(
+    path.join(app, "tsconfig.json"),
+    `${JSON.stringify({ include: ["src"], references: [{ path: "../dependency" }] })}\n`,
+  );
+
+  const result = runCli(root, ["app/src/deleted.ts"]);
+
+  expect(result.status, result.stdout + result.stderr).toBe(0);
 });
 
 it.skipIf(process.platform === "win32")("handles compiler output larger than the default buffer", () => {
@@ -269,6 +392,34 @@ it.skipIf(process.platform === "win32")("handles compiler output larger than the
   expect(result.status, result.stderr).toBe(0);
 });
 
+it.skipIf(process.platform === "win32")("removes the temporary config when interrupted", () => {
+  const root = createProject({ "src/index.ts": "export {};\n", "test/excluded.ts": "export {};\n" });
+  const compilerDirectory = path.join(root, "compiler-bin");
+  const compilerPath = path.join(compilerDirectory, "tsc");
+  mkdirSync(compilerDirectory);
+  writeFileSync(
+    compilerPath,
+    [
+      "#!/bin/sh",
+      'case "$2" in',
+      `  tsconfig.json) [ "$3" = --showConfig ] && echo '{}' || echo '${path.join(root, "src/index.ts")}' ;;`,
+      "  *) kill -INT $PPID; kill -INT $$ ;;",
+      "esac",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(compilerPath, 0o755);
+
+  const result = spawnSync(process.execPath, [cliPath, "test/excluded.ts"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: compilerDirectory },
+  });
+
+  expect(result.signal, result.stderr).toBe("SIGINT");
+  expect(readdirSync(root)).not.toContainEqual(expect.stringMatching(/^\.tsconfig/u));
+});
+
 it("preserves compiler errors from project membership discovery", () => {
   const root = createProject({ "src/index.ts": "export {};\n" }, undefined, { unknownCompilerOption: true });
 
@@ -276,7 +427,6 @@ it("preserves compiler errors from project membership discovery", () => {
 
   expect(result.status).not.toBe(0);
   expect(result.stdout + result.stderr).toContain("unknownCompilerOption");
-  expect(result.stderr).not.toContain("not included in their nearest project");
 });
 
 it("runs a symlinked config from its logical directory", () => {
