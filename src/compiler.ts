@@ -232,6 +232,10 @@ function checkReferences(
   let uncoveredFiles = filePaths;
 
   for (const referencedConfig of referencedConfigs) {
+    if (uncoveredFiles.length === 0 && !checkAll) {
+      break;
+    }
+
     const referencedFiles =
       run.passedProjects.get(referencedConfig) ?? listProjectFiles(run.compiler, referencedConfig);
     const coveredFiles = uncoveredFiles.filter((filePath) => referencedFiles.has(normalizePath(filePath)));
