@@ -113,6 +113,25 @@ function writeCompiler(directory: string, name: "tsc" | "tsc6", output: string, 
   }
 }
 
+function runLoggedCli(cwd: string, files: string[]) {
+  const compilerDirectory = path.join(cwd, "compiler-bin");
+  const logPath = path.join(cwd, "compiler.log");
+  mkdirSync(compilerDirectory);
+  writeFileSync(
+    path.join(compilerDirectory, "tsc"),
+    `#!/bin/sh\necho "$*" >> '${logPath}'\nexec '${compilerBins[7]}' "$@"\n`,
+  );
+  chmodSync(path.join(compilerDirectory, "tsc"), 0o755);
+
+  const result = spawnSync(process.execPath, [cliPath, ...files], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, PATH: [compilerDirectory, process.env.PATH].join(path.delimiter) },
+  });
+
+  return { ...result, compilerCalls: readFileSync(logPath, "utf8").split("\n") };
+}
+
 describe.each([6, 7] as const)("TypeScript %s", (compilerVersion) => {
   it("checks the full affected project", () => {
     const root = createProject({
@@ -314,27 +333,8 @@ it.skipIf(process.platform === "win32")("checks a project referenced by a parent
     path.join(root, "tsconfig.tests.json"),
     `${JSON.stringify({ compilerOptions: { strict: true }, include: ["packages/*/test"] })}\n`,
   );
-  const compilerDirectory = path.join(root, "compiler-bin");
-  const logPath = path.join(root, "compiler.log");
-  mkdirSync(compilerDirectory);
-  writeFileSync(
-    path.join(compilerDirectory, "tsc"),
-    `#!/bin/sh\necho "$*" >> '${logPath}'\nexec '${compilerBins[7]}' "$@"\n`,
-  );
-  chmodSync(path.join(compilerDirectory, "tsc"), 0o755);
-
-  const result = spawnSync(
-    process.execPath,
-    [cliPath, "packages/a/test/index.test.ts", "packages/b/test/index.test.ts"],
-    {
-      cwd: root,
-      encoding: "utf8",
-      env: { ...process.env, PATH: [compilerDirectory, process.env.PATH].join(path.delimiter) },
-    },
-  );
-  const checks = readFileSync(logPath, "utf8")
-    .split("\n")
-    .filter((line) => line.startsWith("--project tsconfig.tests.json --noEmit"));
+  const result = runLoggedCli(root, ["packages/a/test/index.test.ts", "packages/b/test/index.test.ts"]);
+  const checks = result.compilerCalls.filter((line) => line.startsWith("--project tsconfig.tests.json --noEmit"));
 
   expect(result.status, result.stdout + result.stderr).toBe(0);
   expect(checks).toHaveLength(1);
@@ -355,7 +355,7 @@ it("explains missing output of referenced projects", () => {
   expect(result.stderr).toContain("Referenced projects are not built. Run tsc --build once, then try again.");
 });
 
-it("does not check the dependencies of a project with a deleted file", () => {
+it.skipIf(process.platform === "win32")("does not check the dependencies of a project with a deleted file", () => {
   const root = createTemporaryDirectory("tsc-staged-deleted-dependency-");
   createProject({ "src/index.ts": "export const value: string = 1;\n" }, path.join(root, "dependency"), {
     composite: true,
@@ -367,9 +367,10 @@ it("does not check the dependencies of a project with a deleted file", () => {
     `${JSON.stringify({ include: ["src"], references: [{ path: "../dependency" }] })}\n`,
   );
 
-  const result = runCli(root, ["app/src/deleted.ts"]);
+  const result = runLoggedCli(root, ["app/src/deleted.ts"]);
 
   expect(result.status, result.stdout + result.stderr).toBe(0);
+  expect(result.compilerCalls).not.toContainEqual(expect.stringContaining("--listFilesOnly"));
 });
 
 it.skipIf(process.platform === "win32")("handles compiler output larger than the default buffer", () => {
